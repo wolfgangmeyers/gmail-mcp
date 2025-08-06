@@ -62,8 +62,8 @@ If you have Claude Code installed, you can use the automated script to fetch you
    This script will:
    - Open a browser and navigate to Google sign-in
    - Guide you through logging in (you'll need to enter your password)
-   - Handle 2FA verification if required
-   - Enable 2-Step Verification if not already enabled
+   - Handle 2FA verification during login
+   - Enable 2-Step Verification if needed (with your permission)
    - Generate an app-specific password
    - Create the `config.json` file automatically
 

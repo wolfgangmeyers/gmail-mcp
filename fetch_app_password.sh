@@ -14,14 +14,13 @@ echo ""
 echo "This script will use Claude Code to:"
 echo "1. Open a browser and navigate to Google sign-in"
 echo "2. Help you log in to your Google account"
-echo "3. Enable 2-Step Verification if not already enabled"
-echo "4. Generate an app-specific password for Gmail MCP"
-echo "5. Create a config.json file with your credentials"
+echo "3. Generate an app-specific password for Gmail MCP"
+echo "4. Create a config.json file with your credentials"
 echo ""
 echo "Prerequisites:"
 echo "- Claude Code must be installed and configured"
 echo "- You need your Google account email and password"
-echo "- A phone number for 2-Step Verification (if not already enabled)"
+echo "- 2-Step Verification (will be enabled if not already active)"
 echo ""
 read -p "Press Enter to continue or Ctrl+C to cancel..."
 
@@ -41,16 +40,17 @@ Use playwright to:
 1. Navigate to https://accounts.google.com/signin
 2. Enter the email address and click Next
 3. IMPORTANT: Tell the user when the password field is ready and WAIT for them to say they've entered it before proceeding
-4. After the user confirms they've entered the password, check if 2-Step Verification is enabled at https://myaccount.google.com/security
-5. If 2FA is required during login:
+4. After the user confirms they've entered the password, handle any 2FA verification:
    - Tell the user what verification method is being requested (SMS code, authenticator app, etc.)
    - WAIT for the user to provide the 2FA code or complete the verification
    - Let the user tell you when they've completed the 2FA step
-6. If 2-Step Verification is not enabled on the account:
-   - Navigate to enable it
-   - If phone number is needed, pause and let the user provide it
-   - If verification code is sent, wait for the user to provide it
-7. Navigate to https://myaccount.google.com/apppasswords
+5. After successful login, verify that 2-Step Verification is enabled at https://myaccount.google.com/security
+6. If 2-Step Verification is NOT enabled:
+   - Inform the user that 2FA is required for app passwords
+   - Ask the user if they want to enable it now (yes/no)
+   - If YES: Navigate to enable 2FA, handle phone number entry and verification codes as needed
+   - If NO: Stop and tell the user they can enable it manually later
+7. Once 2-Step Verification IS enabled, navigate to https://myaccount.google.com/apppasswords
 8. Create a new app password with the name "Gmail MCP"
 9. Extract the generated password exactly as shown
 10. Create a config.json file with the email and app password
@@ -59,10 +59,11 @@ Important:
 - ALWAYS pause and notify the user when you need them to:
   * Enter their password
   * Complete 2FA verification (SMS code, authenticator app, etc.)
-  * Provide a phone number for 2-Step Verification setup
+  * Make a decision (like whether to enable 2FA)
+  * Provide a phone number for 2FA setup
   * Enter any verification codes
 - Wait for explicit confirmation from the user before proceeding after each pause
-- Handle any verification steps that Google requires
+- If 2FA is not enabled, ask the user before attempting to enable it
 - Make sure to capture the 16-character app password exactly as shown
 - The config.json should have this format:
 {
