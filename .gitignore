@@ -1,5 +1,7 @@
 # Credentials
 config.json
+credentials.json
+tokens/
 
 # Python
 __pycache__/

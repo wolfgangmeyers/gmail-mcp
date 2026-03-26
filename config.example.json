@@ -1,4 +1,9 @@
 {
-  "email": "your.email@gmail.com",
-  "app_password": "xxxx xxxx xxxx xxxx"
+  "accounts": {
+    "your.email@gmail.com": {
+      "token_file": "tokens/your.email.json"
+    }
+  },
+  "default_account": "your.email@gmail.com",
+  "credentials_file": "credentials.json"
 }

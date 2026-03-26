@@ -1,62 +1,100 @@
 #!/usr/bin/env python3
 """
-Gmail MCP Server - A Model Context Protocol server for Gmail IMAP operations
+Gmail MCP Server - A Model Context Protocol server for Gmail via REST API with OAuth2.
 """
 
+import base64
 import json
 import os
 import sys
-import imaplib
-import email
-from email.header import decode_header
 import asyncio
+from email.mime.text import MIMEText
 
+from googleapiclient.discovery import build
 from mcp.server import Server, NotificationOptions
 from mcp.server.models import InitializationOptions
 from mcp.server.stdio import stdio_server
 import mcp.types as types
 
-# Initialize server
+from auth import get_credentials
+
 server = Server("gmail-mcp")
 
-# Global connection state
-gmail_connection = {
-    "imap": None,
-    "email_address": None,
-    "app_password": None
-}
+# Cached Gmail service instances per account
+_services = {}
+_config = None
+
 
 def load_config():
-    """Load configuration from config.json"""
-    config_path = os.path.join(os.path.dirname(__file__), 'config.json')
-    if os.path.exists(config_path):
-        try:
-            with open(config_path, 'r') as f:
-                config = json.load(f)
-                gmail_connection["email_address"] = config.get('email')
-                gmail_connection["app_password"] = config.get('app_password')
-                return True
-        except Exception as e:
-            print(f"Error loading config: {e}", file=sys.stderr)
-            return False
-    return False
+    global _config
+    config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'config.json')
+    if not os.path.exists(config_path):
+        return False
+    with open(config_path, 'r') as f:
+        _config = json.load(f)
+    return True
 
-def connect():
-    """Connect to Gmail via IMAP"""
-    if not gmail_connection["email_address"] or not gmail_connection["app_password"]:
-        raise Exception("Email credentials not configured. Please create config.json")
-    
-    if gmail_connection["imap"] is None:
-        gmail_connection["imap"] = imaplib.IMAP4_SSL("imap.gmail.com", 993)
-        gmail_connection["imap"].login(
-            gmail_connection["email_address"], 
-            gmail_connection["app_password"]
-        )
-    return gmail_connection["imap"]
+
+def get_service(account=None):
+    """Get a Gmail API service for the given account."""
+    if account is None:
+        account = _config['default_account']
+
+    if account not in _config.get('accounts', {}):
+        raise Exception(f"Account {account} not found in config.json")
+
+    if account not in _services:
+        creds = get_credentials(account)
+        _services[account] = build('gmail', 'v1', credentials=creds)
+
+    return _services[account], account
+
+
+def _parse_message_headers(msg):
+    """Extract common headers from a Gmail API message."""
+    headers = {h['name'].lower(): h['value'] for h in msg.get('payload', {}).get('headers', [])}
+    return {
+        'id': msg['id'],
+        'threadId': msg.get('threadId', ''),
+        'from': headers.get('from', ''),
+        'to': headers.get('to', ''),
+        'subject': headers.get('subject', ''),
+        'date': headers.get('date', ''),
+        'snippet': msg.get('snippet', ''),
+    }
+
+
+def _extract_body(msg):
+    """Extract plain text body from a Gmail API message."""
+    payload = msg.get('payload', {})
+
+    # Simple message (no parts)
+    if 'body' in payload and payload['body'].get('data'):
+        return base64.urlsafe_b64decode(payload['body']['data']).decode('utf-8', errors='replace')
+
+    # Multipart message
+    parts = payload.get('parts', [])
+    for part in parts:
+        if part.get('mimeType') == 'text/plain' and part.get('body', {}).get('data'):
+            return base64.urlsafe_b64decode(part['body']['data']).decode('utf-8', errors='replace')
+        # Check nested parts
+        for sub in part.get('parts', []):
+            if sub.get('mimeType') == 'text/plain' and sub.get('body', {}).get('data'):
+                return base64.urlsafe_b64decode(sub['body']['data']).decode('utf-8', errors='replace')
+
+    return ''
+
+
+ACCOUNT_PROPERTY = {
+    "account": {
+        "type": "string",
+        "description": "Gmail account to use (defaults to default_account from config)"
+    }
+}
+
 
 @server.list_tools()
 async def handle_list_tools() -> list[types.Tool]:
-    """List available tools"""
     return [
         types.Tool(
             name="list_emails",
@@ -68,7 +106,8 @@ async def handle_list_tools() -> list[types.Tool]:
                         "type": "integer",
                         "description": "Number of recent emails to list",
                         "default": 10
-                    }
+                    },
+                    **ACCOUNT_PROPERTY
                 }
             }
         ),
@@ -80,8 +119,9 @@ async def handle_list_tools() -> list[types.Tool]:
                 "properties": {
                     "email_id": {
                         "type": "string",
-                        "description": "The ID of the email to read"
-                    }
+                        "description": "The Gmail message ID"
+                    },
+                    **ACCOUNT_PROPERTY
                 },
                 "required": ["email_id"]
             }
@@ -94,206 +134,173 @@ async def handle_list_tools() -> list[types.Tool]:
                 "properties": {
                     "email_id": {
                         "type": "string",
-                        "description": "The ID of the email to delete"
-                    }
+                        "description": "The Gmail message ID to delete"
+                    },
+                    **ACCOUNT_PROPERTY
                 },
                 "required": ["email_id"]
             }
         ),
         types.Tool(
+            name="send_email",
+            description="Send an email via Gmail",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "to": {
+                        "type": "string",
+                        "description": "Recipient email address"
+                    },
+                    "subject": {
+                        "type": "string",
+                        "description": "Email subject line"
+                    },
+                    "body": {
+                        "type": "string",
+                        "description": "Email body (plain text)"
+                    },
+                    **ACCOUNT_PROPERTY
+                },
+                "required": ["to", "subject", "body"]
+            }
+        ),
+        types.Tool(
             name="search_emails",
-            description="Search emails using IMAP search syntax",
+            description="Search emails using Gmail search syntax (same as Gmail web UI)",
             inputSchema={
                 "type": "object",
                 "properties": {
                     "query": {
                         "type": "string",
-                        "description": "IMAP search query (e.g., 'FROM \"sender@example.com\"', 'SUBJECT \"meeting\"', 'UNSEEN')"
+                        "description": "Gmail search query (e.g., 'from:sender@example.com', 'subject:meeting', 'is:unread')"
                     },
                     "max_results": {
                         "type": "integer",
                         "description": "Maximum number of results to return",
                         "default": 20
-                    }
+                    },
+                    **ACCOUNT_PROPERTY
                 },
                 "required": ["query"]
             }
         )
     ]
 
+
 @server.call_tool()
 async def handle_call_tool(
     name: str, arguments: dict | None
 ) -> list[types.TextContent | types.ImageContent | types.EmbeddedResource]:
-    """Handle tool calls"""
-    
     if not arguments:
         arguments = {}
-    
+
     try:
+        account = arguments.pop('account', None)
+        service, account_email = get_service(account)
+
         if name == "list_emails":
             num_emails = arguments.get("num_emails", 10)
-            imap = connect()
-            imap.select("INBOX")
-            
-            status, messages = imap.search(None, "ALL")
-            if status != "OK":
-                return [types.TextContent(type="text", text="Failed to fetch emails")]
-            
-            email_ids = messages[0].split()
-            latest_emails = email_ids[-num_emails:] if len(email_ids) >= num_emails else email_ids
-            latest_emails.reverse()
-            
+            results = service.users().messages().list(
+                userId='me', maxResults=num_emails, labelIds=['INBOX']
+            ).execute()
+
+            messages = results.get('messages', [])
             emails = []
-            for email_id in latest_emails:
-                status, msg_data = imap.fetch(email_id, "(RFC822)")
-                if status != "OK":
-                    continue
-                
-                raw_email = msg_data[0][1]
-                msg = email.message_from_bytes(raw_email)
-                
-                subject = decode_header(msg["Subject"])[0][0]
-                if isinstance(subject, bytes):
-                    subject = subject.decode()
-                
-                from_header = decode_header(msg["From"])[0][0]
-                if isinstance(from_header, bytes):
-                    from_header = from_header.decode()
-                
-                emails.append({
-                    "id": email_id.decode(),
-                    "from": from_header,
-                    "subject": subject,
-                    "date": msg["Date"]
-                })
-            
-            result = {"emails": emails, "count": len(emails)}
+            for msg_ref in messages:
+                msg = service.users().messages().get(
+                    userId='me', id=msg_ref['id'], format='metadata',
+                    metadataHeaders=['From', 'To', 'Subject', 'Date']
+                ).execute()
+                emails.append(_parse_message_headers(msg))
+
+            result = {"emails": emails, "count": len(emails), "account": account_email}
             return [types.TextContent(type="text", text=json.dumps(result, indent=2))]
-        
+
         elif name == "read_email":
             email_id = arguments["email_id"]
-            imap = connect()
-            imap.select("INBOX")
-            
-            status, msg_data = imap.fetch(email_id.encode(), "(RFC822)")
-            if status != "OK":
-                return [types.TextContent(type="text", text=f"Failed to fetch email {email_id}")]
-            
-            raw_email = msg_data[0][1]
-            msg = email.message_from_bytes(raw_email)
-            
-            subject = decode_header(msg["Subject"])[0][0]
-            if isinstance(subject, bytes):
-                subject = subject.decode()
-            
-            from_header = decode_header(msg["From"])[0][0]
-            if isinstance(from_header, bytes):
-                from_header = from_header.decode()
-            
-            body = ""
-            if msg.is_multipart():
-                for part in msg.walk():
-                    if part.get_content_type() == "text/plain":
-                        body = part.get_payload(decode=True).decode()
-                        break
-            else:
-                body = msg.get_payload(decode=True).decode()
-            
-            result = {
-                "id": email_id,
-                "from": from_header,
-                "subject": subject,
-                "date": msg["Date"],
-                "body": body
-            }
-            return [types.TextContent(type="text", text=json.dumps(result, indent=2))]
-        
+            msg = service.users().messages().get(
+                userId='me', id=email_id, format='full'
+            ).execute()
+
+            info = _parse_message_headers(msg)
+            info['body'] = _extract_body(msg)
+            info['labels'] = msg.get('labelIds', [])
+            return [types.TextContent(type="text", text=json.dumps(info, indent=2))]
+
         elif name == "delete_email":
             email_id = arguments["email_id"]
-            imap = connect()
-            imap.select("INBOX")
-            
-            imap.store(email_id.encode(), '+FLAGS', '\\Deleted')
-            result = imap.copy(email_id.encode(), '[Gmail]/Trash')
-            if result[0] == 'OK':
-                imap.expunge()
-                return [types.TextContent(type="text", text=f"Email {email_id} moved to trash")]
-            else:
-                return [types.TextContent(type="text", text="Failed to move email to trash")]
-        
+            service.users().messages().trash(userId='me', id=email_id).execute()
+            return [types.TextContent(type="text", text=f"Email {email_id} moved to trash")]
+
+        elif name == "send_email":
+            to_addr = arguments["to"]
+            subject = arguments["subject"]
+            body = arguments["body"]
+
+            mime = MIMEText(body)
+            mime['to'] = to_addr
+            mime['from'] = account_email
+            mime['subject'] = subject
+
+            raw = base64.urlsafe_b64encode(mime.as_bytes()).decode()
+            service.users().messages().send(
+                userId='me', body={'raw': raw}
+            ).execute()
+
+            return [types.TextContent(type="text", text=f"Email sent to {to_addr} with subject: {subject}")]
+
         elif name == "search_emails":
             query = arguments["query"]
             max_results = arguments.get("max_results", 20)
-            imap = connect()
-            imap.select("INBOX")
-            
-            status, messages = imap.search(None, query)
-            if status != "OK":
-                return [types.TextContent(type="text", text=f"Search failed for query: {query}")]
-            
-            email_ids = messages[0].split()
-            if not email_ids:
-                result = {"emails": [], "count": 0, "query": query}
+
+            results = service.users().messages().list(
+                userId='me', q=query, maxResults=max_results
+            ).execute()
+
+            messages = results.get('messages', [])
+            if not messages:
+                result = {"emails": [], "count": 0, "query": query, "account": account_email}
                 return [types.TextContent(type="text", text=json.dumps(result, indent=2))]
-            
-            email_ids = email_ids[-max_results:] if len(email_ids) > max_results else email_ids
-            email_ids.reverse()
-            
+
             emails = []
-            for email_id in email_ids:
-                status, msg_data = imap.fetch(email_id, "(RFC822)")
-                if status != "OK":
-                    continue
-                
-                raw_email = msg_data[0][1]
-                msg = email.message_from_bytes(raw_email)
-                
-                subject = decode_header(msg["Subject"])[0][0]
-                if isinstance(subject, bytes):
-                    subject = subject.decode()
-                
-                from_header = decode_header(msg["From"])[0][0]
-                if isinstance(from_header, bytes):
-                    from_header = from_header.decode()
-                
-                emails.append({
-                    "id": email_id.decode(),
-                    "from": from_header,
-                    "subject": subject,
-                    "date": msg["Date"]
-                })
-            
-            result = {"emails": emails, "count": len(emails), "query": query}
+            for msg_ref in messages:
+                msg = service.users().messages().get(
+                    userId='me', id=msg_ref['id'], format='metadata',
+                    metadataHeaders=['From', 'To', 'Subject', 'Date']
+                ).execute()
+                emails.append(_parse_message_headers(msg))
+
+            result = {"emails": emails, "count": len(emails), "query": query, "account": account_email}
             return [types.TextContent(type="text", text=json.dumps(result, indent=2))]
-        
+
         else:
             return [types.TextContent(type="text", text=f"Unknown tool: {name}")]
-    
+
     except Exception as e:
+        # Clear cached service on auth errors so next call re-authenticates
+        if 'invalid_grant' in str(e).lower() or '401' in str(e):
+            _services.pop(account, None)
         return [types.TextContent(type="text", text=f"Error: {str(e)}")]
 
+
 def main():
-    """Main entry point"""
-    # Load config on startup
     if not load_config():
-        print("Warning: config.json not found or invalid. Please create it before using the server.", file=sys.stderr)
-    
-    # Run the server using asyncio
+        print("Warning: config.json not found. Please create it.", file=sys.stderr)
     asyncio.run(run_server())
 
+
 async def run_server():
-    """Run the MCP server"""
     async with stdio_server() as (read_stream, write_stream):
         init_options = InitializationOptions(
             server_name="gmail-mcp",
-            server_version="1.0.0",
+            server_version="2.0.0",
             capabilities=server.get_capabilities(
                 notification_options=NotificationOptions(),
                 experimental_capabilities={}
             )
         )
         await server.run(read_stream, write_stream, init_options)
+
 
 if __name__ == "__main__":
     main()
