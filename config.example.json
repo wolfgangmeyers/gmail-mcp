@@ -1,7 +1,8 @@
 {
   "accounts": {
     "your.email@gmail.com": {
-      "token_file": "tokens/your.email.json"
+      "token_file": "tokens/your.email.json",
+      "display_name": "Your Name"
     }
   },
   "default_account": "your.email@gmail.com",

@@ -239,7 +239,8 @@ async def handle_call_tool(
 
             mime = MIMEText(body)
             mime['to'] = to_addr
-            mime['from'] = account_email
+            display_name = _config.get('accounts', {}).get(account_email, {}).get('display_name')
+            mime['from'] = f"{display_name} <{account_email}>" if display_name else account_email
             mime['subject'] = subject
 
             raw = base64.urlsafe_b64encode(mime.as_bytes()).decode()

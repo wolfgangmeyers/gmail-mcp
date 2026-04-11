@@ -103,6 +103,20 @@ Or directly:
 claude mcp add gmail-mcp "/path/to/gmail-mcp/venv/bin/python /path/to/gmail-mcp/server.py"
 ```
 
+## CLI send (no MCP)
+
+For scripts, tmux, or environments without MCP, send plain text with the same OAuth tokens:
+
+```bash
+source venv/bin/activate
+python send_email.py --to recipient@example.com --subject "Subject" --body "Hello"
+python send_email.py --to recipient@example.com --subject "Report" --body-file notes.txt
+echo "Hello" | python send_email.py --to recipient@example.com --subject "Hi"
+python send_email.py --account other@gmail.com --to recipient@example.com --subject "Hi" --body "From alternate account"
+```
+
+Agent-facing docs: **`.claude/skills/gmail/SKILL.md`** in this repo (symlink to `~/.claude/skills/gmail`).
+
 ## Usage
 
 All tools accept an optional `account` parameter to specify which Gmail account to use. If omitted, the `default_account` from config is used.
@@ -146,7 +160,9 @@ python auth.py authorize you@gmail.com
 
 ```
 gmail-mcp/
+├── .claude/skills/gmail/  # Claude Code skill (CLI usage; symlink from ~/.claude/skills/gmail)
 ├── server.py              # MCP server (Gmail REST API + OAuth2)
+├── send_email.py          # CLI: send plain-text email (same OAuth as server)
 ├── auth.py                # OAuth2 flow and credential management
 ├── config.json            # Account configuration (gitignored)
 ├── config.example.json    # Example configuration
