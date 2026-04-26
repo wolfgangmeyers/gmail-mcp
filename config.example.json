@@ -6,5 +6,9 @@
     }
   },
   "default_account": "your.email@gmail.com",
-  "credentials_file": "credentials.json"
+  "credentials_file": "credentials.json",
+  "poll_account": "your.email@gmail.com",
+  "allowed_senders": [
+    "trusted-sender@example.com"
+  ]
 }
