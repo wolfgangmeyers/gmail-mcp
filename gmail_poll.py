@@ -23,8 +23,20 @@ PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
 LOG_PATH = os.path.expanduser('~/.mecha-wolfgang/gmail-poll.log')
 MAILBOX_SEND = os.path.expanduser('~/.claude/skills/supervisor/tools/mailbox_send.py')
 
-POLL_ACCOUNT = 'skraaglenax@gmail.com'
-FROM_FILTER = 'wolfgangmeyers@gmail.com'
+def _load_poll_account():
+    with open(os.path.join(PROJECT_DIR, 'config.json'), 'r') as f:
+        cfg = json.load(f)
+    return cfg.get('poll_account') or cfg['default_account']
+
+
+def _load_from_filters():
+    with open(os.path.join(PROJECT_DIR, 'config.json'), 'r') as f:
+        cfg = json.load(f)
+    return cfg.get('from_filters') or ['wolfgangmeyers@gmail.com']
+
+
+POLL_ACCOUNT = _load_poll_account()
+FROM_FILTERS = _load_from_filters()
 
 # Set up logging
 os.makedirs(os.path.dirname(LOG_PATH), exist_ok=True)
@@ -95,14 +107,14 @@ def main():
     creds = get_credentials(config)
     service = build('gmail', 'v1', credentials=creds)
 
-    query = f'from:{FROM_FILTER}'
+    query = ' OR '.join(f'from:{addr}' for addr in FROM_FILTERS)
     results = service.users().messages().list(userId='me', q=query).execute()
     messages = results.get('messages', [])
 
     if not messages:
         return
 
-    log.info(f"Found {len(messages)} email(s) from {FROM_FILTER}")
+    log.info(f"Found {len(messages)} email(s) matching {FROM_FILTERS}")
 
     for msg_ref in messages:
         msg = service.users().messages().get(userId='me', id=msg_ref['id'], format='full').execute()
