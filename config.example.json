@@ -10,5 +10,8 @@
   "poll_account": "your.email@gmail.com",
   "allowed_senders": [
     "trusted-sender@example.com"
+  ],
+  "allowed_recipients": [
+    "trusted-recipient@example.com"
   ]
 }

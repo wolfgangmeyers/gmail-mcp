@@ -78,6 +78,16 @@ def main() -> None:
         print("Error: empty body", file=sys.stderr)
         sys.exit(1)
 
+    allowed_recipients = config.get("allowed_recipients")
+    if allowed_recipients is not None and args.to not in allowed_recipients:
+        print(
+            f"Error: {args.to!r} is not in allowed_recipients.\n"
+            f"Allowed addresses: {', '.join(allowed_recipients)}\n"
+            f"Check your memory for the correct recipient address and retry.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
     creds = get_credentials(account)
     service = build("gmail", "v1", credentials=creds)
     send_plain(service, account, config, args.to, args.subject, body)
